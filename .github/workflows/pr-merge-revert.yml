@@ -9,18 +9,22 @@ on:
         default: main
 
 permissions:
-  contents: write         # needed to push and to merge PRs
-  pull-requests: write    # needed to create PRs
+  contents: write         # still needed for pushing commits
+  pull-requests: write    # still needed for other PR ops if GITHUB_TOKEN is used elsewhere
 
 jobs:
   demo:
     runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN }}  # Use a Personal Access Token with repo:write perms
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ env.GH_TOKEN }}  # Ensure pushes use PAT
 
       - name: Configure git user
         run: |
@@ -44,6 +48,7 @@ jobs:
         id: create_pr
         uses: actions/github-script@v7
         with:
+          github-token: ${{ env.GH_TOKEN }}
           script: |
             const base = core.getInput('base') || 'main';
             const head = "${{ steps.make_change.outputs.branch }}";
@@ -61,6 +66,7 @@ jobs:
         id: merge_pr
         uses: actions/github-script@v7
         with:
+          github-token: ${{ env.GH_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const pull_number = Number("${{ steps.create_pr.outputs.number }}");
@@ -69,7 +75,6 @@ jobs:
               merge_method: "merge",                 // ensure a merge commit exists
               commit_title: `Merge auto PR #${pull_number}`
             });
-            // res.data.sha is the merge-commit SHA per docs
             core.setOutput('merge_sha', res.data.sha);
 
       - name: Create revert branch and revert the merge commit
@@ -82,7 +87,6 @@ jobs:
           REVERT_BRANCH="revert-pr-${PR_NUM}"
           git fetch origin "${BASE}"
           git checkout -B "$REVERT_BRANCH" "origin/${BASE}"
-          # Revert the merge commit; -m 1 picks the first parent (the base branch)
           git revert -m 1 "$MERGE_SHA" --no-edit
           git push -u origin "$REVERT_BRANCH"
           echo "branch=$REVERT_BRANCH" >> $GITHUB_OUTPUT
@@ -91,6 +95,7 @@ jobs:
         id: create_revert_pr
         uses: actions/github-script@v7
         with:
+          github-token: ${{ env.GH_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const base = core.getInput('base') || 'main';
