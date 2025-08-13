@@ -1,0 +1,111 @@
+name: PR → Merge → Revert (demo)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base branch to target
+        required: false
+        default: main
+
+permissions:
+  contents: write         # needed to push and to merge PRs
+  pull-requests: write    # needed to create PRs
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git user
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create a feature branch and commit
+        id: make_change
+        env:
+          BASE: ${{ github.event.inputs.base }}
+        run: |
+          BRANCH="feat-auto-${{ github.run_id }}"
+          git checkout -B "$BRANCH" "origin/${BASE}"
+          echo "Hello from run ${{ github.run_id }} at $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> demo.txt
+          git add demo.txt
+          git commit -m "demo: automated change"
+          git push -u origin "$BRANCH"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Create PR (REST)
+        id: create_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const base = core.getInput('base') || 'main';
+            const head = "${{ steps.make_change.outputs.branch }}";
+            const { owner, repo } = context.repo;
+            const pr = await github.rest.pulls.create({
+              owner, repo,
+              title: `Auto PR for run #${context.runNumber}`,
+              head, base,
+              body: "Automated demo PR created by workflow."
+            });
+            core.setOutput('number', pr.data.number);
+            core.setOutput('html_url', pr.data.html_url);
+
+      - name: Merge PR (REST, merge commit)
+        id: merge_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = Number("${{ steps.create_pr.outputs.number }}");
+            const res = await github.rest.pulls.merge({
+              owner, repo, pull_number,
+              merge_method: "merge",                 // ensure a merge commit exists
+              commit_title: `Merge auto PR #${pull_number}`
+            });
+            // res.data.sha is the merge-commit SHA per docs
+            core.setOutput('merge_sha', res.data.sha);
+
+      - name: Create revert branch and revert the merge commit
+        id: revert_commit
+        env:
+          BASE: ${{ github.event.inputs.base }}
+          MERGE_SHA: ${{ steps.merge_pr.outputs.merge_sha }}
+          PR_NUM: ${{ steps.create_pr.outputs.number }}
+        run: |
+          REVERT_BRANCH="revert-pr-${PR_NUM}"
+          git fetch origin "${BASE}"
+          git checkout -B "$REVERT_BRANCH" "origin/${BASE}"
+          # Revert the merge commit; -m 1 picks the first parent (the base branch)
+          git revert -m 1 "$MERGE_SHA" --no-edit
+          git push -u origin "$REVERT_BRANCH"
+          echo "branch=$REVERT_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Open revert PR (REST)
+        id: create_revert_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const base = core.getInput('base') || 'main';
+            const head = "${{ steps.revert_commit.outputs.branch }}";
+            const pr = await github.rest.pulls.create({
+              owner, repo,
+              title: `Revert "Auto PR for run #${context.runNumber}"`,
+              head, base,
+              body: `This reverts merge commit \`${{ steps.merge_pr.outputs.merge_sha }}\`.`
+            });
+            core.setOutput('number', pr.data.number);
+            core.setOutput('html_url', pr.data.html_url)
+
+      - name: Summarize
+        run: |
+          echo "Opened PR:     ${{ steps.create_pr.outputs.html_url }}"
+          echo "Merged SHA:    ${{ steps.merge_pr.outputs.merge_sha }}"
+          echo "Revert PR:     ${{ steps.create_revert_pr.outputs.html_url }}"
