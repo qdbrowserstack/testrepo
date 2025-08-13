@@ -9,22 +9,22 @@ on:
         default: main
 
 permissions:
-  contents: write         # still needed for pushing commits
-  pull-requests: write    # still needed for other PR ops if GITHUB_TOKEN is used elsewhere
+  contents: write
+  pull-requests: write
 
 jobs:
   demo:
     runs-on: ubuntu-latest
 
     env:
-      GH_TOKEN: ${{ secrets.PAT_TOKEN }}  # Use a Personal Access Token with repo:write perms
+      GH_TOKEN: ${{ secrets.PAT_TOKEN }}  # PAT with repo:write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ env.GH_TOKEN }}  # Ensure pushes use PAT
+          token: ${{ env.GH_TOKEN }}
 
       - name: Configure git user
         run: |
@@ -72,7 +72,7 @@ jobs:
             const pull_number = Number("${{ steps.create_pr.outputs.number }}");
             const res = await github.rest.pulls.merge({
               owner, repo, pull_number,
-              merge_method: "merge",                 // ensure a merge commit exists
+              merge_method: "merge",
               commit_title: `Merge auto PR #${pull_number}`
             });
             core.setOutput('merge_sha', res.data.sha);
@@ -107,10 +107,26 @@ jobs:
               body: `This reverts merge commit \`${{ steps.merge_pr.outputs.merge_sha }}\`.`
             });
             core.setOutput('number', pr.data.number);
-            core.setOutput('html_url', pr.data.html_url)
+            core.setOutput('html_url', pr.data.html_url);
+
+      - name: Merge revert PR (REST, merge commit)
+        id: merge_revert_pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = Number("${{ steps.create_revert_pr.outputs.number }}");
+            const res = await github.rest.pulls.merge({
+              owner, repo, pull_number,
+              merge_method: "merge",
+              commit_title: `Merge revert PR #${pull_number}`
+            });
+            core.setOutput('merge_sha', res.data.sha);
 
       - name: Summarize
         run: |
-          echo "Opened PR:     ${{ steps.create_pr.outputs.html_url }}"
-          echo "Merged SHA:    ${{ steps.merge_pr.outputs.merge_sha }}"
-          echo "Revert PR:     ${{ steps.create_revert_pr.outputs.html_url }}"
+          echo "Opened PR:        ${{ steps.create_pr.outputs.html_url }}"
+          echo "Merged SHA:       ${{ steps.merge_pr.outputs.merge_sha }}"
+          echo "Revert PR:        ${{ steps.create_revert_pr.outputs.html_url }}"
+          echo "Merged revert SHA:${{ steps.merge_revert_pr.outputs.merge_sha }}"
