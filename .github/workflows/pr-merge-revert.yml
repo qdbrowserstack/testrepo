@@ -9,7 +9,7 @@ on:
         default: main
 
   schedule:
-   - cron: '57 8 * * 1'  # Every Sunday at 2:25 PM IST
+   - cron: '10 9 * * 1'  # Every Sunday at 2:25 PM IST
 
 permissions:
   contents: write
